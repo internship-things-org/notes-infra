@@ -1,0 +1,88 @@
+services:
+  db:
+    image: postgres:18
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ../notes-be/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - postgres-data:/var/lib/postgresql
+    networks:
+      - notes-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  redis:
+    image: redis:8.2
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks:
+      - notes-network
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  backend:
+    build:
+      context: ../notes-be
+      dockerfile: Dockerfile
+    image: ghcr.io/daulyoi/backend:latest
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - PORT=${PORT}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - notes-network
+  frontend:
+    build:
+      context: ../notes-fe
+      dockerfile: Dockerfile
+    image: ghcr.io/daulyoi/frontend:latest
+    ports:
+      # Publish on all interfaces so the UI is reachable on EC2 (not only localhost)
+      - "8080:80"
+    depends_on:
+      - backend
+    networks:
+      - notes-network
+  worker:
+    build:
+      context: ../notes-worker
+      dockerfile: Dockerfile
+    image: ghcr.io/daulyoi/worker:latest
+    depends_on:
+      - backend
+    networks:
+      - notes-network
+    environment:
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - POLL_INTERVAL_MS=${POLL_INTERVAL_MS}
+volumes:
+  postgres-data:
+    driver: local
+
+networks:
+  notes-network:
+    driver: bridge
